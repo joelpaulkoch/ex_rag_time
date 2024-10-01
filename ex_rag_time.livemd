@@ -1,0 +1,197 @@
+<!-- livebook:{"app_settings":{"access_type":"public","output_type":"rich","slug":"rag"}} -->
+
+# RAG
+
+```elixir
+Mix.install(
+  [
+    {:bumblebee, "~> 0.5.3"},
+    {:langchain, "~> 0.3.0-rc.0"},
+    {:text_chunker, "~> 0.3.1"},
+    {:nx, "~> 0.7.0"},
+    {:exla, "~> 0.7.0"},
+    {:axon, "~> 0.6.1"},
+    {:kino, "~> 0.12.0"},
+    {:chroma, github: "3zcurdia/chroma"},
+    {:req, "~> 0.5.6"}
+  ],
+  config: [
+    chroma: [host: "http://localhost:8000", api_base: "api", api_version: "v1"],
+    nx: [default_backend: EXLA.Backend]
+  ]
+)
+
+Nx.global_default_backend(EXLA.Backend)
+```
+
+## Chroma
+
+Run chroma db on port 8000 or change the config in the setup block.
+
+For instance with docker: `docker run -p 8000:8000 chromadb/chroma`
+
+Then create a chroma collection in which we can store the embeddings of the code.
+
+```elixir
+{:ok, collection} =
+  Chroma.Collection.get_or_create("rag-time", %{"hnsw:space" => "cosine"})
+```
+
+## Ollama
+
+We can use Ollama to run the models we need:
+
+1. [Download](https://ollama.com) and start ollama: `ollama start`
+2. Get the embeddings model: `ollama pull unclemusclez/jina-embeddings-v2-base-code`
+3. Get the llm that we interact with: `ollama pull llama3:8b`
+4. Run the llm: `ollama run llama3:8b`
+
+NOTE: try https://ollama.com/library/llama3.2
+
+## Get the code
+
+```elixir
+directory_input = Kino.Input.text("Input directory")
+```
+
+```elixir
+input_path = Kino.Input.read(directory_input)
+
+if !input_path || input_path == "", do: raise "Empty input path"
+
+files =
+  Path.wildcard(input_path <> "/**/*.{ex, exs}")
+  |> Enum.filter(fn path -> not String.contains?(path, ["/_build/", "/deps/", "/node_modules/"]) end)
+
+files_content = for file <- files, do: File.read!(file)
+```
+
+## Chunk the code
+
+```elixir
+chunks = for content <- files_content, do:  TextChunker.split(content, format: :elixir)
+```
+
+## Generate embeddings
+
+```elixir
+metadata =
+  Enum.zip(files, chunks)
+  |> Enum.map(fn {file, file_chunks} ->
+    for chunk <- file_chunks, do: %{file: file, start_byte: chunk.start_byte, end_byte: chunk.end_byte}
+  end)
+  |> List.flatten()
+```
+
+```elixir
+embeddings_url = "http://localhost:11434/api/embeddings"
+
+embeddings_data =
+  %{
+    model: "unclemusclez/jina-embeddings-v2-base-code",
+    prompt: "Llamas are members of the camelid family"
+  }
+```
+
+```elixir
+embeddings =
+  for chunk <- List.flatten(chunks) do
+    Req.post!(embeddings_url, json: %{embeddings_data | prompt: chunk.text}).body["embedding"]
+  end
+```
+
+NOTE: according to https://ollama.com/unclemusclez/jina-embeddings-v2-base-code (and huggingface) we should apply mean pooling, so we should have a look at that
+
+## Store embeddings
+
+```elixir
+documents = chunks |> List.flatten() |> Enum.map(& &1.text)
+ids = Enum.map(metadata, &"#{&1.file}-#{&1.start_byte}-#{&1.end_byte}")
+
+Chroma.Collection.add(
+  collection,
+  %{
+    documents: documents,
+    embeddings: embeddings,
+    metadata: metadata,
+    ids: ids 
+  }
+)
+```
+
+## Question
+
+```elixir
+question_input = Kino.Input.textarea("Your question")
+```
+
+```elixir
+question = Kino.Input.read(question_input)
+
+if !question || question == "", do: raise "Empty input path"
+```
+
+## Retrieve context from chroma
+
+```elixir
+query_embeddings = Req.post!(embeddings_url, json: %{embeddings_data | prompt: question}).body["embedding"] 
+
+{:ok, result} =
+  Chroma.Collection.query(
+    collection,
+    results: 3,
+    query_embeddings: [query_embeddings]
+  )
+```
+
+```elixir
+context =
+  result["documents"]
+  |> List.flatten()
+  |> Enum.sort()
+  |> Enum.map(fn page -> "[...] " <> page <> " [...]" end)
+  |> Enum.join("\n\n")
+
+IO.puts(context)
+```
+
+## Prompt LLM
+
+```elixir
+query = question
+
+prompt =
+  """
+  Context information is below.
+  ---------------------
+  #{context}
+  ---------------------
+  Given the context information and not prior knowledge, answer the query.
+  Query: #{query}
+  Answer:
+  """
+```
+
+```elixir
+{:ok, model} =
+  LangChain.ChatModels.ChatOllamaAI.new(%{
+    endpoint: "http://localhost:11434/api/chat",
+    model: "llama3:8b"
+  })
+```
+
+```elixir
+alias LangChain.Chains.LLMChain
+alias LangChain.ChatModels.ChatOpenAI
+alias LangChain.Message
+
+{:ok, _updated_chain, response} =
+  %{llm: model}
+  |> LLMChain.new!()
+  |> LLMChain.add_message(Message.new_user!(prompt))
+  |> LLMChain.run()
+```
+
+```elixir
+Kino.Markdown.new(response.content)
+```
