@@ -57,11 +57,13 @@ directory_input = Kino.Input.text("Input directory")
 ```elixir
 input_path = Kino.Input.read(directory_input)
 
-if !input_path || input_path == "", do: raise "Empty input path"
+if !input_path || input_path == "", do: raise("Empty input path")
 
 files =
   Path.wildcard(input_path <> "/**/*.{ex, exs}")
-  |> Enum.filter(fn path -> not String.contains?(path, ["/_build/", "/deps/", "/node_modules/"]) end)
+  |> Enum.filter(fn path ->
+    not String.contains?(path, ["/_build/", "/deps/", "/node_modules/"])
+  end)
 
 files_content = for file <- files, do: File.read!(file)
 ```
@@ -69,7 +71,7 @@ files_content = for file <- files, do: File.read!(file)
 ## Chunk the code
 
 ```elixir
-chunks = for content <- files_content, do:  TextChunker.split(content, format: :elixir)
+chunks = for content <- files_content, do: TextChunker.split(content, format: :elixir)
 ```
 
 ## Generate embeddings
@@ -78,7 +80,8 @@ chunks = for content <- files_content, do:  TextChunker.split(content, format: :
 metadata =
   Enum.zip(files, chunks)
   |> Enum.map(fn {file, file_chunks} ->
-    for chunk <- file_chunks, do: %{file: file, start_byte: chunk.start_byte, end_byte: chunk.end_byte}
+    for chunk <- file_chunks,
+        do: %{file: file, start_byte: chunk.start_byte, end_byte: chunk.end_byte}
   end)
   |> List.flatten()
 ```
@@ -89,7 +92,7 @@ embeddings_url = "http://localhost:11434/api/embeddings"
 embeddings_data =
   %{
     model: "unclemusclez/jina-embeddings-v2-base-code",
-    prompt: "Llamas are members of the camelid family"
+    prompt: "Placeholder for prompt"
   }
 ```
 
@@ -114,7 +117,7 @@ Chroma.Collection.add(
     documents: documents,
     embeddings: embeddings,
     metadata: metadata,
-    ids: ids 
+    ids: ids
   }
 )
 ```
@@ -128,13 +131,14 @@ question_input = Kino.Input.textarea("Your question")
 ```elixir
 question = Kino.Input.read(question_input)
 
-if !question || question == "", do: raise "Empty input path"
+if !question || question == "", do: raise("Empty input path")
 ```
 
 ## Retrieve context from chroma
 
 ```elixir
-query_embeddings = Req.post!(embeddings_url, json: %{embeddings_data | prompt: question}).body["embedding"] 
+query_embeddings =
+  Req.post!(embeddings_url, json: %{embeddings_data | prompt: question}).body["embedding"]
 
 {:ok, result} =
   Chroma.Collection.query(
@@ -145,14 +149,14 @@ query_embeddings = Req.post!(embeddings_url, json: %{embeddings_data | prompt: q
 ```
 
 ```elixir
+context_sources = result["ids"] |> List.flatten()
+
 context =
   result["documents"]
   |> List.flatten()
   |> Enum.sort()
   |> Enum.map(fn page -> "[...] " <> page <> " [...]" end)
   |> Enum.join("\n\n")
-
-IO.puts(context)
 ```
 
 ## Prompt LLM
@@ -193,5 +197,19 @@ alias LangChain.Message
 ```
 
 ```elixir
-Kino.Markdown.new(response.content)
+formatted_context_sources =
+  context_sources
+  |> Enum.map(&" - #{&1}")
+  |> Enum.join("\n")
+
+enriched_response = """
+  #{response.content}
+
+  ---
+
+  Sources:  
+  #{formatted_context_sources}
+"""
+
+Kino.Markdown.new(enriched_response)
 ```
