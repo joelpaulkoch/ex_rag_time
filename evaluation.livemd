@@ -1,0 +1,440 @@
+# Evaluation
+
+```elixir
+Mix.install([
+  {:text_chunker, "~> 0.3.1"},
+  {:bumblebee, "~> 0.6.0"},
+  {:nx, "~> 0.9.1"},
+  {:axon, "~> 0.7.0"},
+  {:kino, "~> 0.14.1"},
+  {:exla, "~> 0.9.1"},
+  {:langchain, "~> 0.3.0-rc.0"},
+  {:explorer, "~> 0.9.2"},
+  {:chroma, "~> 0.1.3"}
+])
+
+Nx.global_default_backend({EXLA.Backend, client: :host})
+```
+
+## Setup
+
+Following this cookbook: https://huggingface.co/learn/cookbook/rag_evaluation
+
+We need:
+
+1. An evaluation dataset with question - answer couples (QA couples)
+2. An evaluator to compute the accuracy of our system on the above evaluation dataset.
+
+This livebook covers step 2, evaluating the RAG system on an existing dataset.
+
+<!-- livebook:{"break_markdown":true} -->
+
+First, we need an LLM at hand to help us (for the evaluation system, not for the RAG system). We make use of LangChain, this way we can easily swap out the model whenever we want to.
+
+```elixir
+# we use openai here but you can change it to any llm supported by langchain
+# you must set your openai api key as OPENAI_API_KEY secret in livebook
+Application.put_env(:langchain, :openai_key, System.fetch_env!("LB_OPENAI_API_KEY"))
+
+alias LangChain.Chains.LLMChain
+alias LangChain.ChatModels.ChatOpenAI
+alias LangChain.Message
+alias LangChain.PromptTemplate
+
+llm = ChatOpenAI.new!(%{model: "gpt-4o-mini"})
+```
+
+Next, we download a dataset that we can use for evaluation from huggingface.
+
+```elixir
+alias Explorer.DataFrame
+
+df = DataFrame.from_csv!("https://hf.co/datasets/joelkoch/rag_eval/resolve/main/phoenix.csv")
+```
+
+Each row in the dataset includes the following content:
+
+* a document, for instance the content of a file
+* a question that can be answered by reading the document
+* an answer to the question
+
+All the documents are part of our evaluation codebase.
+We ingest the codebase into the RAG system.
+Then, we go through each row of the dataset, ask the RAG system the question and store the response.
+Last, we ask another LLM to compare the answer of our RAG system with the answer stored in the evaluation dataset taking into account the document that was used to create the question and answer.
+
+This diagram shows the plan we follow to evaluate the RAG system.
+
+<!-- livebook:{"break_markdown":true} -->
+
+<!-- Learn more at https://mermaid-js.github.io/mermaid -->
+
+```mermaid
+graph TD;  
+  codebase[(Evaluation Codebase)]
+  eval_data[Evaluation Dataset]
+  rag((RAG System))
+  rag_responses[Responses]
+  evaluation_agent((Evaluation Agent))
+  scores[Scores]
+
+  codebase-- ingest -->rag
+  codebase-- previously generated -->eval_data
+  eval_data-- ask questions -->rag
+  rag-->rag_responses
+
+  eval_data-->evaluation_agent
+  rag_responses-->evaluation_agent
+  evaluation_agent-->scores
+```
+
+## RAG
+
+```elixir
+# setup
+{:ok, collection} =
+  Chroma.Collection.get_or_create("rag-time", %{"hnsw:space" => "cosine"})
+
+eval_repo = Path.join(__DIR__, "/eval_repo")
+
+if !File.exists?(eval_repo), do: raise("Evaluation repository must be at #{eval_repo}")
+
+files =
+  Path.wildcard(Path.join(eval_repo, "/**/*.{ex, exs}"))
+  |> Enum.filter(fn path ->
+    not String.contains?(path, ["/_build/", "/deps/", "/node_modules/"])
+  end)
+
+files_content = for file <- files, do: File.read!(file)
+```
+
+```elixir
+chunks = for content <- files_content, do: TextChunker.split(content, format: :elixir)
+
+metadata =
+  Enum.zip(files, chunks)
+  |> Enum.map(fn {file, file_chunks} ->
+    for chunk <- file_chunks,
+        do: %{file: file, start_byte: chunk.start_byte, end_byte: chunk.end_byte}
+  end)
+  |> List.flatten()
+```
+
+```elixir
+defmodule Ingestion do
+  @embeddings_url "http://localhost:11434/api/embeddings"
+
+  @embeddings_data %{
+    model: "unclemusclez/jina-embeddings-v2-base-code",
+    prompt: "Placeholder for prompt"
+  }
+  @collection collection
+
+  def chunk_with_metadata(documents, format) do
+    chunks = Enum.map(documents, &TextChunker.split(&1.content, format: format))
+    sources = Enum.map(documents, & &1.source)
+
+    Enum.zip(sources, chunks)
+    |> Enum.map(fn {source, source_chunks} ->
+      for chunk <- source_chunks,
+          do: %{
+            source: source,
+            start_byte: chunk.start_byte,
+            end_byte: chunk.end_byte,
+            text: chunk.text
+          }
+    end)
+    |> List.flatten()
+  end
+
+  def generate_embeddings(chunks) do
+    Enum.map(
+      chunks,
+      &Req.post!(@embeddings_url, json: %{@embeddings_data | prompt: &1.text}).body["embedding"]
+    )
+  end
+
+  def store_embeddings_and_chunks(embeddings, chunks) do
+    documents = Enum.map(chunks, & &1.text)
+    ids = Enum.map(chunks, &"#{&1.source}-#{&1.start_byte}-#{&1.end_byte}")
+
+    Chroma.Collection.add(
+      @collection,
+      %{
+        documents: documents,
+        embeddings: embeddings,
+        # metadata: metadata,
+        ids: ids
+      }
+    )
+  end
+
+  def ingest(documents) do
+    chunks = chunk_with_metadata(documents, :elixir)
+
+    embeddings = generate_embeddings(chunks)
+
+    store_embeddings_and_chunks(embeddings, chunks)
+  end
+end
+```
+
+```elixir
+defmodule Retrieval do
+  @embeddings_url "http://localhost:11434/api/embeddings"
+
+  @embeddings_data %{
+    model: "unclemusclez/jina-embeddings-v2-base-code",
+    prompt: "Placeholder for prompt"
+  }
+
+  @collection collection
+
+  def retrieve(question) do
+    query_embeddings =
+      Req.post!(@embeddings_url, json: %{@embeddings_data | prompt: question}).body["embedding"]
+
+    {:ok, result} =
+      Chroma.Collection.query(
+        @collection,
+        results: 3,
+        query_embeddings: [query_embeddings]
+      )
+
+    context_sources = result["ids"] |> List.flatten()
+
+    context =
+      result["documents"]
+      |> List.flatten()
+      |> Enum.sort()
+      |> Enum.map(fn page -> "[...] " <> page <> " [...]" end)
+      |> Enum.join("\n\n")
+
+    {context, context_sources}
+  end
+end
+```
+
+```elixir
+defmodule Generation do
+  @endpoint "http://localhost:11434/api/chat"
+  @model "llama3:8b"
+
+  @llm LangChain.ChatModels.ChatOllamaAI.new!(%{
+         endpoint: @endpoint,
+         model: @model
+       })
+
+  @chain LangChain.Chains.LLMChain.new!(%{llm: @llm})
+
+  def generate_response(question, context, context_sources) do
+    query = question
+
+    prompt =
+      """
+      Context information is below.
+      ---------------------
+      #{context}
+      ---------------------
+      Given the context information and not prior knowledge, answer the query.
+      Query: #{query}
+      Answer:
+      """
+
+    {:ok, _updated_chain, response} =
+      @chain
+      |> LLMChain.add_message(Message.new_user!(prompt))
+      |> LLMChain.run()
+
+    enrich_response(response, context_sources)
+  end
+
+  defp enrich_response(response, context_sources) do
+    formatted_context_sources =
+      context_sources
+      |> Enum.map(&enrich_context_source(&1))
+      |> Enum.map(&" - #{&1}")
+      |> Enum.join("\n")
+
+    """
+      #{response.content}
+
+      ---
+
+      Sources:  
+      #{formatted_context_sources}
+    """
+  end
+
+  defp enrich_context_source(source) do
+    [path, start_byte, end_byte] = String.split(source, "-")
+
+    file_content = File.read!(path)
+
+    start_line =
+      file_content
+      |> String.byte_slice(0, String.to_integer(start_byte))
+      |> String.split("\n")
+      |> Enum.count()
+
+    end_line =
+      file_content
+      |> String.byte_slice(0, String.to_integer(end_byte))
+      |> String.split("\n")
+      |> Enum.count()
+
+    "#{path} lines: #{start_line}-#{end_line}"
+  end
+end
+```
+
+## Run RAG
+
+We ingest the documents.
+
+```elixir
+documents =
+  Enum.zip(files, files_content)
+  |> Enum.map(fn {source, content} -> %{source: source, content: content} end)
+
+Ingestion.ingest(documents)
+```
+
+Then, we ask all our questions and store the responses.
+
+```elixir
+rag_responses_df =
+  DataFrame.transform(df, fn %{"questions" => question} ->
+    {context, context_sources} = Retrieval.retrieve(question)
+
+    response = Generation.generate_response(question, context, context_sources)
+
+    %{rag_responses: response}
+  end)
+
+now = DateTime.utc_now() |> DateTime.to_unix()
+DataFrame.to_csv(rag_responses_df, Path.join(__DIR__, "/#{now}_rag_responses.csv"))
+```
+
+## Evaluation agent
+
+Following the [huggingface cookbook](https://huggingface.co/learn/cookbook/rag_evaluation#evaluating-rag-performance), we build an agent to evaluate the response of our RAG system based on a predefined question-answer pair and the corresponding context.
+
+For that, we need a system prompt to tell the LLM about its role and two prompt templates that we will use to build our prompt.
+
+Last, we configure the "chain" with the LLM and our system prompt.
+
+```elixir
+# set up llm agent to evaluate rag answers
+
+evaluation_system_prompt =
+  Message.new_system!("""
+  You are a fair evaluator language model.
+  """)
+
+evaluation_template =
+  PromptTemplate.new!(%{
+    text: """
+    ###Task Description:
+    An instruction (might include an Input inside it), a response to evaluate, a reference answer that gets a score of 5, and a score rubric representing a evaluation criteria are given.
+    1. Write a detailed feedback that assess the quality of the response strictly based on the given score rubric, not evaluating in general.
+    2. After writing a feedback, write a score that is an integer between 1 and 5. You should refer to the score rubric.
+    3. The output format should look as follows: "Feedback: {{write a feedback for criteria}} [RESULT] {{an integer number between 1 and 5}}"
+    4. Please do not generate any other opening, closing, and explanations. Be sure to include [RESULT] in your output.
+
+    ###The instruction to evaluate:
+    <%= @instruction %>
+
+    ###Response to evaluate:
+    <%= @response %>
+
+    ###Reference Answer (Score 5):
+    <%= @reference_answer %>
+
+    ###Score Rubrics:
+    [Is the response correct, accurate, and factual based on the reference answer?]
+    Score 1: The response is completely incorrect, inaccurate, and/or not factual.
+    Score 2: The response is mostly incorrect, inaccurate, and/or not factual.
+    Score 3: The response is somewhat correct, accurate, and/or factual.
+    Score 4: The response is mostly correct, accurate, and factual.
+    Score 5: The response is completely correct, accurate, and factual.
+
+    ###Feedback:
+    """,
+    role: :user
+  })
+
+instruction_template =
+  PromptTemplate.new!(%{
+    text: """
+    Context information is below.
+    ---------------------
+    <%= @context %>
+    ---------------------
+    Given the context information and not prior knowledge, answer the query.
+    Query: <%= @query %>
+    Answer:
+    """
+  })
+
+evaluation_chain =
+  LLMChain.new!(%{llm: llm})
+  |> LLMChain.add_message(evaluation_system_prompt)
+```
+
+We evaluate each row of our dataset.
+
+```elixir
+eval_responses_df =
+  DataFrame.transform(rag_responses_df, fn %{
+                                             "context" => context,
+                                             "questions" => question,
+                                             "rag_responses" => rag_response,
+                                             "answers" => answer
+                                           } ->
+    prompt =
+      Message.new_user!(
+        PromptTemplate.format_composed(
+          evaluation_template,
+          %{instruction: instruction_template, response: rag_response, reference_answer: answer},
+          %{
+            context: context,
+            query: question
+          }
+        )
+      )
+
+    {:ok, _chain, response} =
+      LLMChain.add_message(evaluation_chain, prompt) |> LLMChain.run()
+
+    %{evaluation_responses: response.content}
+  end)
+
+now = DateTime.utc_now() |> DateTime.to_unix()
+
+DataFrame.to_csv(
+  eval_responses_df,
+  Path.join(__DIR__, "/#{now}_evaluation_responses.csv")
+)
+```
+
+Last, we extract the score from the LLM response and calculate our final score for the RAG system.
+
+```elixir
+eval_scores_df =
+  DataFrame.transform(eval_responses_df, fn %{"evaluation_responses" => evaluation_response} ->
+    [_, score] = String.split(evaluation_response, "[RESULT] ")
+
+    {score, ""} = Integer.parse(score)
+
+    %{evaluation_scores: score}
+  end)
+
+avg_score =
+  Explorer.Series.sum(eval_scores_df["evaluation_scores"]) /
+    Explorer.Series.count(eval_scores_df["evaluation_scores"])
+
+avg_score / 5
+```
+
+<!-- livebook:{"offset":12208,"stamp":{"token":"XCP.N22hoRceDbX-FugE1D_ngaClcp9kaGnRB06XVbQ7q5yPmxgkcLG17qW8YWn2atA-ZhdoTMnbSSS45E4CXCwyxmXIOGBDBi2YZXD_TtTWqCZcSFSBcy1IMRI","version":2}} -->
