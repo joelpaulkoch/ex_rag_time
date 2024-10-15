@@ -1,0 +1,421 @@
+# Build Evaluation Dataset
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.14.1"},
+  {:langchain, "~> 0.3.0-rc.0"},
+  {:explorer, "~> 0.9.2"}
+])
+```
+
+## Build a synthetic dataset for evaluation
+
+Following this cookbook: https://huggingface.co/learn/cookbook/rag_evaluation
+
+We need:
+
+1. An evaluation dataset with question - answer couples (QA couples)
+2. An evaluator to compute the accuracy of our system on the above evaluation dataset.
+
+This livebook covers step 1, building an evaluation dataset.
+
+This diagram shows the plan we follow to build the dataset.
+
+<!-- livebook:{"break_markdown":true} -->
+
+<!-- Learn more at https://mermaid-js.github.io/mermaid -->
+
+```mermaid
+graph TD;
+  codebase[(Evaluation Codebase)]
+  documents[Documents]
+  qa_pairs[Question-Answer pairs based on documents]
+  scored_qa_pairs[Scored Question-Answer pairs]
+
+  hq_qa_pairs[High-Quality Question-Answer pairs]
+
+  gen_chain((Generation Chain))
+  critique_agents((Critique Agents))
+
+  codebase-- read selected files -->documents
+  documents-- include in prompt -->gen_chain
+
+  gen_chain-- generates --> qa_pairs
+
+  qa_pairs-- in prompt -->critique_agents
+
+  critique_agents-- evaluate pairs -->scored_qa_pairs
+
+  scored_qa_pairs-- filter based on score -->hq_qa_pairs
+
+```
+
+<!-- livebook:{"break_markdown":true} -->
+
+First, we need an LLM at hand to help us. We make use of LangChain, this way we can easily swap out the model whenever we want to.
+
+```elixir
+# we use openai here but you can change it to any llm supported by langchain
+# you must set your openai api key as OPENAI_API_KEY secret in livebook
+Application.put_env(:langchain, :openai_key, System.fetch_env!("LB_OPENAI_API_KEY"))
+
+alias LangChain.Chains.LLMChain
+alias LangChain.ChatModels.ChatOpenAI
+alias LangChain.Message
+alias LangChain.PromptTemplate
+
+llm = ChatOpenAI.new!(%{model: "gpt-4o"})
+```
+
+Then, we need a codebase to ask our system some questions about.
+We can use any Elixir codebase we want, we choose Phoenix and clone the repository from https://github.com/phoenixframework/phoenix
+
+```elixir
+eval_repo_source = "https://github.com/phoenixframework/phoenix"
+repo_path = Path.join([__DIR__, "/eval_repo"])
+
+System.cmd("git", ["clone", eval_repo_source, repo_path])
+```
+
+We read all the files that we are interested in. In this case all the files ending in `.ex` or `.exs`.
+
+We will use the whole files as documents, that means we will give the complete file to the LLM and ask it to generate a question-answer pair based on the content of the file.
+
+Another option would be to split the file into chunks (the same chunking we will do in our RAG system) and then generate question-answer pairs about the single chunk.
+
+I think using the complete file provides more context for generating good question-answer pairs.
+
+```elixir
+documents = Path.wildcard(repo_path <> "/**/*.{ex, exs}") |> Enum.map(&File.read!/1)
+```
+
+The following is the system prompt we use to tell the LLM about its role (which I copied from the [huggingface cookbook](https://huggingface.co/learn/cookbook/rag_evaluation)).
+
+And a `PromptTemplate`, in which we will insert the content of each file and then use this prompt to ask the LLM to generate a question-answer pair for the file.
+
+Last, we configure the "chain" with the LLM and our system prompt.
+
+```elixir
+gen_system_prompt =
+  Message.new_system!("""
+  Your task is to write a factoid question and an answer given a context.
+  Your factoid question should be answerable with a specific, concise piece of factual information from the context.
+  Your factoid question should be formulated in the same style as questions users could ask in a search engine.
+  This means that your factoid question MUST NOT mention something like "according to the passage" or "context".
+
+  Provide your answer as follows:
+
+  Output:::
+  Factoid question: (your factoid question)
+  Answer: (your answer to the factoid question)
+  """)
+
+gen_template =
+  PromptTemplate.new!(%{
+    text: """
+    Now here is the context.
+
+    Context: <%= @context %>\n
+    Output:::
+    """,
+    role: :user
+  })
+
+gen_chain =
+  LLMChain.new!(%{llm: llm})
+  |> LLMChain.add_message(gen_system_prompt)
+```
+
+We will filter the generated question-answer pairs later, so we make sure we have enough of them to get a proper dataset. We ask the LLM to generate multiple question-answer pairs for each of our documents.
+
+```elixir
+questions_per_document = 3
+
+IO.puts("Number of documents: #{Enum.count(documents)}")
+IO.puts("Generating #{questions_per_document * Enum.count(documents)} question answer pairs")
+
+responses =
+  for document <- documents, _i <- 1..questions_per_document do
+    {:ok, _chain, response} =
+      LLMChain.add_message(
+        gen_chain,
+        PromptTemplate.to_message!(gen_template, %{context: document})
+      )
+      |> LLMChain.run()
+
+    response
+  end
+```
+
+Next, we must extract the question-answer pairs from the plain text we got from the LLM. Unfortunately, the LLM can decide to just not follow our prompt and the output can be garbage.
+So, you might get errors with this code.
+
+```elixir
+responses_contents = Enum.map(responses, & &1.content)
+
+question_answers =
+  for content <- responses_contents do
+    lines = String.split(content, "\n")
+
+    question =
+      Enum.find(lines, "", &String.starts_with?(&1, "Factoid question: "))
+      |> String.trim_leading("Factoid question: ")
+
+    answer =
+      Enum.find(lines, "", &String.starts_with?(&1, "Answer: "))
+      |> String.trim_leading("Answer: ")
+
+    {question, answer}
+  end
+```
+
+We create a dataframe from the question-answer pairs and save them to disk. This way we have a checkpoint after the LLM generation, in case something goes wrong in the following steps we can load the dataframe and start over again.
+
+This saves a CSV file in the directory of the livebook, this might be a directory for temporary files if you didn't save the livebook.
+
+```elixir
+alias Explorer.DataFrame
+
+{questions, answers} = Enum.unzip(question_answers)
+
+context = for doc <- documents, _i <- 1..3, do: doc
+
+df =
+  DataFrame.new(context: context, questions: questions, answers: answers)
+  |> DataFrame.distinct(["context", "questions"])
+
+now_unix = DateTime.utc_now() |> DateTime.to_unix()
+
+DataFrame.to_csv(df, Path.join(__DIR__, "/#{now_unix}_qa.csv"))
+```
+
+## Filter Dataset based on Critique Agents
+
+From the [huggingface cookbook](https://huggingface.co/learn/cookbook/rag_evaluation):
+
+> 1.3. Setup critique agents
+> 
+> The questions generated by the previous agent can have many flaws: we should do a quality check before validating these questions.
+> 
+> We thus build critique agents that will rate each question on several criteria, given in this paper:
+> 
+> * Groundedness: can the question be answered from the given context?
+> * Relevance: is the question relevant to users? For instance, "What is the date when transformers 4.29.1 was released?" is not relevant for ML practicioners.
+> 
+> One last failure case we’ve noticed is when a function is tailored for the particular setting where the question was generated, but undecipherable by itself, like "What is the name of the function used in this guide?". We also build a critique agent for this criteria:
+> 
+> * Stand-alone: is the question understandable free of any context, for someone with domain knowledge/Internet access? The opposite of this would be What is the function used in this article? for a question generated from a specific blog article.
+> 
+> We systematically score functions with all these agents, and whenever the score is too low for any one of the agents, we eliminate the question from our eval dataset.
+> 
+> 💡 When asking the agents to output a score, we first ask them to produce its rationale. This will help us verify scores, but most importantly, asking it to first output rationale gives the model more tokens to think and elaborate an answer before summarizing it into a single score token.
+
+So, in this section we will build three "Critique Agents", evaluate the previously generated question-answer pairs, and then filter the dataset based on the scores.
+
+```elixir
+# load dataframe in case you skipped building a dataset
+# {:ok, df} = Explorer.DataFrame.from_csv(Path.join([__DIR__, "/1728937475_qa.csv"]))
+```
+
+We build the critique agents in the exact same way we built our chain for generating question-answer pairs.
+
+For each agent we need:
+
+* a system prompts to tell the agent about its role (copied from the [huggingface cookbook](https://huggingface.co/learn/cookbook/rag_evaluation))
+* a `PromptTemplate`, to build the prompt required for scoring the question-answer pair
+* a "chain" with the LLM and the system prompt
+
+```elixir
+groundedness_system_prompt =
+  Message.new_system!("""
+  You will be given a context and a question.
+  Your task is to provide a 'total rating' scoring how well one can answer the given question unambiguously with the given context.
+  Give your answer on a scale of 1 to 5, where 1 means that the question is not answerable at all given the context, and 5 means that the question is clearly and unambiguously answerable with the context.
+
+  Provide your answer as follows:
+
+  Answer:::
+  Evaluation: (your rationale for the rating, as a text)
+  Total rating: (your rating, as a number between 1 and 5)
+
+  You MUST provide values for 'Evaluation:' and 'Total rating:' in your answer.
+  """)
+
+groundedness_template =
+  PromptTemplate.new!(%{
+    text: """
+     Now here are the question and context.
+
+     Question: <%= @question %>\n
+     Context: <%= @context %>\n
+     Answer::: 
+    """,
+    role: :user
+  })
+
+relevance_system_prompt =
+  Message.new_system!("""
+  You will be given a question.
+  Your task is to provide a 'total rating' representing how useful this question can be to web developers building an application.
+  Give your answer on a scale of 1 to 5, where 1 means that the question is not useful at all, and 5 means that the question is extremely useful.
+
+  Provide your answer as follows:
+
+  Answer:::
+  Evaluation: (your rationale for the rating, as a text)
+  Total rating: (your rating, as a number between 1 and 5)
+
+  You MUST provide values for 'Evaluation:' and 'Total rating:' in your answer.
+  """)
+
+relevance_template =
+  PromptTemplate.new!(%{
+    text: """
+    Now here is the question.
+
+    Question: <%= @question %>\n
+    Answer::: 
+    """,
+    role: :user
+  })
+
+standalone_system_prompt =
+  Message.new_system!("""
+  You will be given a question.
+  Your task is to provide a 'total rating' representing how context-independant this question is.
+  Give your answer on a scale of 1 to 5, where 1 means that the question depends on additional information to be understood, and 5 means that the question makes sense by itself.
+  For instance, if the question refers to a particular setting, like 'in the context' or 'in the document', the rating must be 1.
+  The questions can contain obscure technical nouns or acronyms like Gradio, Hub, Hugging Face or Space and still be a 5: it must simply be clear to an operator with access to documentation what the question is about.
+
+  For instance, "What is the name of the checkpoint from which the ViT model is imported?" should receive a 1, since there is an implicit mention of a context, thus the question is not independant from the context.
+
+  Provide your answer as follows:
+
+  Answer:::
+  Evaluation: (your rationale for the rating, as a text)
+  Total rating: (your rating, as a number between 1 and 5)
+
+  You MUST provide values for 'Evaluation:' and 'Total rating:' in your answer.
+  """)
+
+standalone_template =
+  PromptTemplate.new!(%{
+    text: """
+    Now here is the question.
+
+    Question: <%= @question %>\n
+    Answer::: 
+    """,
+    role: :user
+  })
+
+groundedness_chain =
+  LLMChain.new!(%{llm: llm})
+  |> LLMChain.add_message(groundedness_system_prompt)
+
+relevance_chain =
+  LLMChain.new!(%{llm: llm})
+  |> LLMChain.add_message(relevance_system_prompt)
+
+standalone_chain =
+  LLMChain.new!(%{llm: llm})
+  |> LLMChain.add_message(standalone_system_prompt)
+```
+
+For each of the question-answer pairs, we prompt the agents to get an evaluation.
+
+```elixir
+responses_df =
+  DataFrame.transform(df, fn %{"context" => context, "questions" => question} ->
+    {:ok, _chain, groundedness_response} =
+      LLMChain.add_message(
+        groundedness_chain,
+        PromptTemplate.to_message!(groundedness_template, %{question: question, context: context})
+      )
+      |> LLMChain.run()
+
+    {:ok, _chain, relevance_response} =
+      LLMChain.add_message(
+        relevance_chain,
+        PromptTemplate.to_message!(relevance_template, %{question: question})
+      )
+      |> LLMChain.run()
+
+    {:ok, _chain, standalone_response} =
+      LLMChain.add_message(
+        standalone_chain,
+        PromptTemplate.to_message!(standalone_template, %{question: question})
+      )
+      |> LLMChain.run()
+
+    %{
+      groundedness_response: groundedness_response.content,
+      relevance_response: relevance_response.content,
+      standalone_response: standalone_response.content
+    }
+  end)
+
+now_unix = DateTime.utc_now() |> DateTime.to_unix()
+DataFrame.to_csv(responses_df, Path.join(__DIR__, "/#{now_unix}_responses.csv"))
+```
+
+Then, we extract the evaluation score and put the response of the agent and the score in our dataframe.
+
+```elixir
+get_eval_and_score = fn s ->
+  case String.split(s, ["Evaluation: ", "Total rating: "]) do
+    [_pre, evaluation, score] ->
+      evaluation = String.trim_trailing(evaluation, "\n\n")
+
+      {score, _} = String.trim_trailing(score, "\n\n") |> Integer.parse()
+
+      {evaluation, score}
+
+    _ ->
+      dbg(s)
+      {s, -1}
+  end
+end
+
+scores_df =
+  DataFrame.transform(responses_df, fn %{
+                                         "groundedness_response" => groundedness_response,
+                                         "relevance_response" => relevance_response,
+                                         "standalone_response" => standalone_response
+                                       } ->
+    {_evaluation, groundedness_score} = get_eval_and_score.(groundedness_response)
+    {_evalution, relevance_score} = get_eval_and_score.(relevance_response)
+    {_evaluation, standalone_score} = get_eval_and_score.(standalone_response)
+
+    %{
+      groundedness_score: groundedness_score,
+      relevance_score: relevance_score,
+      standalone_score: standalone_score
+    }
+  end)
+```
+
+Next, we filter the question-answer pairs based on the evaluation scores of the agents. We store the resulting dataset. You can upload it somewhere to make it available for running the actual RAG evaluation.
+
+```elixir
+now_unix = DateTime.utc_now() |> DateTime.to_unix()
+DataFrame.to_csv(scores_df, Path.join(__DIR__, "/#{now_unix}_qa_scores_unfiltered.csv"))
+
+# filter to keep only those with all scores at least min_score
+require Explorer.DataFrame
+
+min_score = 4
+
+eval_df =
+  DataFrame.filter(scores_df, [
+    groundedness_score >= ^min_score,
+    relevance_score >= ^min_score,
+    standalone_score >= ^min_score
+  ])
+
+DataFrame.to_csv(eval_df, Path.join(__DIR__, "/#{now_unix}_qa_scores_filtered.csv"))
+
+eval_df
+```
+
+<!-- livebook:{"offset":15103,"stamp":{"token":"XCP.BphYaXnrlY9yTmtYeAjlET6Kb7B3t_rSoqMpAswNFP_RMTtNrrIhR0EkXJ_d92qOQhb3pPk23Lk5CElQ1FKzmpGykgj9SYT2ATFTn_GPHDbwTbpoBNN5yZk","version":2}} -->
