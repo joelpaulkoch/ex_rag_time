@@ -59,7 +59,9 @@ defmodule ExRagTime.Application do
   end
 
   def build_llm_serving() do
-    repo = {:hf, "meta-llama/Llama-3.2-1B", auth_token: "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"}
+    repo =
+      {:hf, "meta-llama/Llama-3.2-1B",
+       auth_token: Application.fetch_env!(:bumblebee, :hf_auth_token)}
 
     {:ok, model_info} = Bumblebee.load_model(repo)
     {:ok, tokenizer} = Bumblebee.load_tokenizer(repo)
