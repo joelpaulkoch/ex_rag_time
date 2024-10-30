@@ -2,6 +2,8 @@ import Config
 
 config :nx, default_backend: EXLA.Backend
 
+config :ex_rag_time, ExRagTime.Repo, load_extensions: [SqliteVec.path()]
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration

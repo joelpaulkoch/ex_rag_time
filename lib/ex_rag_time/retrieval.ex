@@ -19,7 +19,7 @@ defmodule ExRagTime.Retrieval do
         from embeddings
         left join chunks on chunks.id = embeddings.id
         where sample_embedding match ?
-        and k = 3
+        and k = 5
         order by distance
         """,
         [query_embedding_string]

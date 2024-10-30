@@ -3,7 +3,7 @@ defmodule ExRagTime.Repo.Migrations.AddEmbeddingsTable do
 
   def up do
     execute(
-      "create virtual table embeddings using vec0( sample_embedding float[384], id INTEGER PRIMARY KEY);"
+      "create virtual table embeddings using vec0( sample_embedding float[768], id INTEGER PRIMARY KEY);"
     )
 
     execute(

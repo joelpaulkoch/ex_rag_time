@@ -17,7 +17,7 @@ defmodule ExRagTimeWeb.Router do
   scope "/", ExRagTimeWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", RagLive
   end
 
   # Other scopes may use custom stacks.

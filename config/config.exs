@@ -7,6 +7,8 @@
 # General application configuration
 import Config
 
+config :sqlite_vec, version: "0.1.3"
+
 config :ex_rag_time,
   ecto_repos: [ExRagTime.Repo],
   generators: [timestamp_type: :utc_datetime]

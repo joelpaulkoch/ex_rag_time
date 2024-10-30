@@ -45,9 +45,14 @@ defmodule ExRagTime.Application do
   end
 
   def build_embedding_serving() do
-    repo = {:hf, "thenlper/gte-small"}
+    repo = {:hf, "jinaai/jina-embeddings-v2-base-code"}
 
-    {:ok, model_info} = Bumblebee.load_model(repo)
+    {:ok, model_info} =
+      Bumblebee.load_model(repo,
+        spec_overrides: [architecture: :base],
+        params_filename: "model.safetensors"
+      )
+
     {:ok, tokenizer} = Bumblebee.load_tokenizer(repo)
 
     Bumblebee.Text.TextEmbedding.text_embedding(model_info, tokenizer,
