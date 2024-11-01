@@ -1,4 +1,6 @@
 defmodule ExRagTime.Ingestion do
+  alias ExRagTime.Repo
+
   def chunk_with_metadata(documents, format) do
     chunks = Enum.map(documents, &TextChunker.split(&1.content, format: format))
     sources = Enum.map(documents, & &1.source)
@@ -29,19 +31,15 @@ defmodule ExRagTime.Ingestion do
       dbg(embedding)
       %{embedding: embedding} = embedding
       embedding = Nx.to_list(embedding)
-      embedding_string = "[" <> Enum.join(embedding, "") <> "]"
 
-      Ecto.Adapters.SQL.query(
-        ExRagTime.Repo,
-        "insert into embeddings(id, sample_embedding) values(?, ?)",
-        [i, embedding_string]
-      )
+      code_chunk = %ExRagTime.CodeChunk{
+        document: document,
+        source: source,
+        metadata: "",
+        embedding: embedding
+      }
 
-      Ecto.Adapters.SQL.query(
-        ExRagTime.Repo,
-        "insert into chunks(id, document, source) values(?, ?, ?)",
-        [i, document, source]
-      )
+      Repo.insert(code_chunk)
     end
   end
 

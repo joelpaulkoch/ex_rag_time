@@ -1,35 +1,28 @@
 defmodule ExRagTime.Retrieval do
+  alias ExRagTime.Repo
+  alias ExRagTime.CodeChunk
+  import Ecto.Query
+  import SqliteVec.Ecto.Query
+
   def retrieve(question) do
     if !question || question == "", do: raise("Empty question")
 
     %{embedding: query_embedding} = Nx.Serving.batched_run(ExRagTime.EmbeddingsServing, question)
 
-    query_embedding = Nx.to_list(query_embedding)
-    query_embedding_string = "[" <> Enum.join(query_embedding, ", ") <> "]"
+    query_vector = SqliteVec.Float32.new(query_embedding)
 
-    {:ok, result} =
-      Ecto.Adapters.SQL.query(
-        ExRagTime.Repo,
-        """
-        select 
-          embeddings.id,
-          distance,
-          document,
-          source
-        from embeddings
-        left join chunks on chunks.id = embeddings.id
-        where sample_embedding match ?
-        and k = 5
-        order by distance
-        """,
-        [query_embedding_string]
+    results =
+      Repo.all(
+        from(c in CodeChunk,
+          order_by: l2_distance(c.embedding, vec_f32(^query_vector.data)),
+          limit: 5
+        )
       )
 
-    context_sources =
-      for [_something, _distance, _context, context_source] <- result.rows, do: context_source
+    context_sources = Enum.map(results, & &1.source)
 
     context =
-      Enum.map(result.rows, fn [_something, _distance, context, _context_source] ->
+      Enum.map(results, fn %{document: context} ->
         "[...] #{context} [...]"
       end)
       |> Enum.join("\n\n")
