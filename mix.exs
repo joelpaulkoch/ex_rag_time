@@ -9,7 +9,8 @@ defmodule ExRagTime.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
-      deps: deps()
+      deps: deps(),
+      releases: releases()
     ]
   end
 
@@ -32,8 +33,8 @@ defmodule ExRagTime.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
-      {:sqlite_vec,
-       github: "joelpaulkoch/sqlite_vec", ref: "2966b08668a52133f067c3212c545ced68e5b768"},
+      {:burrito, "~> 1.0"},
+      {:sqlite_vec, github: "joelpaulkoch/sqlite_vec"},
       {:bumblebee, github: "joelpaulkoch/bumblebee", branch: "jina-embeddings-v2-base-code"},
       {:langchain, "~> 0.3.0-rc.0"},
       {:text_chunker, "~> 0.3.1"},
@@ -88,6 +89,19 @@ defmodule ExRagTime.MixProject do
         "tailwind ex_rag_time --minify",
         "esbuild ex_rag_time --minify",
         "phx.digest"
+      ]
+    ]
+  end
+
+  def releases do
+    [
+      ex_rag_time: [
+        steps: [:assemble, &Burrito.wrap/1],
+        burrito: [
+          targets: [
+            macos: [os: :darwin, cpu: :aarch64]
+          ]
+        ]
       ]
     ]
   end

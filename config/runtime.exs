@@ -20,17 +20,10 @@ config :ex_rag_time, ExRagTime.Repo, load_extensions: [SqliteVec.path()]
 #
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
-if System.get_env("PHX_SERVER") do
-  config :ex_rag_time, ExRagTimeWeb.Endpoint, server: true
-end
+config :ex_rag_time, ExRagTimeWeb.Endpoint, server: true
 
 if config_env() == :prod do
-  database_path =
-    System.get_env("DATABASE_PATH") ||
-      raise """
-      environment variable DATABASE_PATH is missing.
-      For example: /etc/ex_rag_time/ex_rag_time.db
-      """
+  database_path = Path.join(System.tmp_dir!(), "rag.db")
 
   config :ex_rag_time, ExRagTime.Repo,
     database: database_path,
@@ -41,14 +34,9 @@ if config_env() == :prod do
   # want to use a different value for prod and you most likely don't want
   # to check this value into version control, so we use an environment
   # variable instead.
-  secret_key_base =
-    System.get_env("SECRET_KEY_BASE") ||
-      raise """
-      environment variable SECRET_KEY_BASE is missing.
-      You can generate one by calling: mix phx.gen.secret
-      """
+  secret_key_base = "q651ocARuAnMrV9Vx86/LZDlxn7ecd8dBh2N37U2+BEYDSZk5cAs1QXeeMTuNTjv"
 
-  host = System.get_env("PHX_HOST") || "example.com"
+  host = System.get_env("PHX_HOST") || "localhost"
   port = String.to_integer(System.get_env("PORT") || "4000")
 
   config :ex_rag_time, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")

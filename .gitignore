@@ -39,3 +39,7 @@ npm-debug.log
 *.db
 *.db-*
 
+# burrito
+/burrito_out
+
+.DS_Store

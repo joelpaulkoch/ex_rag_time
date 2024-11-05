@@ -3,14 +3,14 @@ defmodule ExRagTime.Generation do
   alias LangChain.Message
 
   @serving_name ExRagTime.LLMServing
-  @template_format :llama_3
+  @template_format :zephyr
   @receive_timeout 10000
 
   @llm LangChain.ChatModels.ChatBumblebee.new!(%{
          serving: @serving_name,
          template_format: @template_format,
          receive_timeout: @receive_timeout,
-         stream: true
+         stream: false
        })
 
   @chain LangChain.Chains.LLMChain.new!(%{llm: @llm})
@@ -22,11 +22,11 @@ defmodule ExRagTime.Generation do
       """
       Context information is below.
       ---------------------
-      #{context}
-      ---------------------
-      Given the context information and not prior knowledge, answer the query.
-      Query: #{query}
-      Answer:
+      #{context} 
+      --------------------- 
+      Given the context information and not prior knowledge, answer the query. 
+      Query: #{query} 
+      Answer: 
       """
 
     {:ok, _updated_chain, response} =
@@ -34,24 +34,12 @@ defmodule ExRagTime.Generation do
       |> LLMChain.add_message(Message.new_user!(prompt))
       |> LLMChain.run()
 
-    enrich_response(response, context_sources)
-  end
-
-  defp enrich_response(response, context_sources) do
-    formatted_context_sources =
-      context_sources
-      |> Enum.map(&enrich_context_source(&1))
-      |> Enum.map(&" - #{&1}")
-      |> Enum.join("\n")
-
-    """
-      #{response.content}
-
-      ---
-
-      Sources:  
-      #{formatted_context_sources}
-    """
+    %{
+      query: query,
+      context: context,
+      context_sources: Enum.map(context_sources, &enrich_context_source(&1)),
+      response: response.content
+    }
   end
 
   defp enrich_context_source(source) do
