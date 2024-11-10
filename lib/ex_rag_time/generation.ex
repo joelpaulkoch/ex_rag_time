@@ -3,14 +3,14 @@ defmodule ExRagTime.Generation do
   alias LangChain.Message
 
   @serving_name ExRagTime.LLMServing
-  @template_format :llama_3
+  @template_format :zephyr
   @receive_timeout 10000
 
   @llm LangChain.ChatModels.ChatBumblebee.new!(%{
          serving: @serving_name,
          template_format: @template_format,
          receive_timeout: @receive_timeout,
-         stream: true
+         stream: false
        })
 
   @chain LangChain.Chains.LLMChain.new!(%{llm: @llm})
