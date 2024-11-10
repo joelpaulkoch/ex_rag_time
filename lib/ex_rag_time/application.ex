@@ -50,7 +50,8 @@ defmodule ExRagTime.Application do
     {:ok, model_info} =
       Bumblebee.load_model(repo,
         spec_overrides: [architecture: :base],
-        params_filename: "model.safetensors"
+        params_filename: "model.safetensors",
+        backend: EXLA.Backend
       )
 
     {:ok, tokenizer} = Bumblebee.load_tokenizer(repo)
@@ -66,7 +67,8 @@ defmodule ExRagTime.Application do
   def build_llm_serving() do
     repo = {:hf, "microsoft/phi-3.5-mini-instruct"}
 
-    {:ok, model_info} = Bumblebee.load_model(repo)
+    {:ok, model_info} = Bumblebee.load_model(repo, backend: EXLA.Backend)
+
     {:ok, tokenizer} = Bumblebee.load_tokenizer(repo)
     {:ok, generation_config} = Bumblebee.load_generation_config(repo)
 
