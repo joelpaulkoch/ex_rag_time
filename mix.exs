@@ -32,8 +32,7 @@ defmodule ExRagTime.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
-      {:sqlite_vec,
-       github: "joelpaulkoch/sqlite_vec", ref: "2966b08668a52133f067c3212c545ced68e5b768"},
+      {:sqlite_vec, github: "joelpaulkoch/sqlite_vec"},
       {:bumblebee, github: "joelpaulkoch/bumblebee", branch: "jina-embeddings-v2-base-code"},
       {:langchain, "~> 0.3.0-rc.0"},
       {:text_chunker, "~> 0.3.1"},

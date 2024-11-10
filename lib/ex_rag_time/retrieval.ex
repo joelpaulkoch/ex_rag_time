@@ -15,7 +15,7 @@ defmodule ExRagTime.Retrieval do
       Repo.all(
         from(c in CodeChunk,
           order_by: l2_distance(c.embedding, vec_f32(^query_vector.data)),
-          limit: 5
+          limit: 3
         )
       )
 

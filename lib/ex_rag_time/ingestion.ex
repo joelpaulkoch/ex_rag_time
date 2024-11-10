@@ -26,9 +26,8 @@ defmodule ExRagTime.Ingestion do
     documents = Enum.map(chunks, & &1.text)
     ids = Enum.map(chunks, &"#{&1.source}-#{&1.start_byte}-#{&1.end_byte}")
 
-    for {{embedding, document, source}, i} <-
+    for {{embedding, document, source}, _i} <-
           Enum.with_index(Enum.zip([embeddings, documents, ids])) do
-      dbg(embedding)
       %{embedding: embedding} = embedding
       embedding = Nx.to_list(embedding)
 

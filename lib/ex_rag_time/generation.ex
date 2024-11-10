@@ -34,24 +34,12 @@ defmodule ExRagTime.Generation do
       |> LLMChain.add_message(Message.new_user!(prompt))
       |> LLMChain.run()
 
-    enrich_response(response, context_sources)
-  end
-
-  defp enrich_response(response, context_sources) do
-    formatted_context_sources =
-      context_sources
-      |> Enum.map(&enrich_context_source(&1))
-      |> Enum.map(&" - #{&1}")
-      |> Enum.join("\n")
-
-    """
-      #{response.content}
-
-      ---
-
-      Sources:  
-      #{formatted_context_sources}
-    """
+    %{
+      query: query,
+      context: context,
+      context_sources: Enum.map(context_sources, &enrich_context_source(&1)),
+      response: response.content
+    }
   end
 
   defp enrich_context_source(source) do
