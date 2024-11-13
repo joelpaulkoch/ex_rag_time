@@ -1,12 +1,5 @@
 import Config
 
-# Configure your database
-config :ex_rag_time, ExRagTime.Repo,
-  database: Path.expand("../ex_rag_time_dev.db", __DIR__),
-  pool_size: 5,
-  stacktrace: true,
-  show_sensitive_data_on_connection_error: true
-
 # For development, we disable any cache and enable
 # debugging and code reloading.
 #

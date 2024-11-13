@@ -9,8 +9,8 @@ defmodule ExRagTime.Application do
   def start(_type, _args) do
     children = [
       {Nx.Serving,
-       serving: build_embedding_serving(), name: ExRagTime.EmbeddingsServing, batch_timeout: 100},
-      {Nx.Serving, serving: build_llm_serving(), name: ExRagTime.LLMServing, batch_timeout: 100},
+       serving: build_embedding_serving(), name: Rag.EmbeddingServing, batch_timeout: 100},
+      {Nx.Serving, serving: build_llm_serving(), name: Rag.LLMServing, batch_timeout: 100},
       ExRagTimeWeb.Telemetry,
       ExRagTime.Repo,
       {Ecto.Migrator,
@@ -40,7 +40,6 @@ defmodule ExRagTime.Application do
   end
 
   defp skip_migrations?() do
-    # By default, sqlite migrations are run when using a release
     System.get_env("RELEASE_NAME") != nil
   end
 
@@ -75,7 +74,7 @@ defmodule ExRagTime.Application do
     Bumblebee.Text.generation(model_info, tokenizer, generation_config,
       compile: [batch_size: 1, sequence_length: 6000],
       defn_options: [compiler: EXLA],
-      stream: true
+      stream: false
     )
   end
 end

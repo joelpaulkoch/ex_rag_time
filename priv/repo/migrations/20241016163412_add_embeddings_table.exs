@@ -1,13 +1,31 @@
 defmodule ExRagTime.Repo.Migrations.AddEmbeddingsTable do
   use Ecto.Migration
 
-  def up do
-    execute(
-      "create virtual table embeddings using vec0( sample_embedding float[768], id INTEGER PRIMARY KEY);"
-    )
+  ## 1. custom with bumblebee + pgvector
+  def up() do
+    execute("CREATE EXTENSION IF NOT EXISTS vector")
 
-    execute(
-      "create table chunks( id INTEGER PRIMARY KEY, document TEXT, metadata TEXT, source TEXT)"
-    )
+    flush()
+
+    create table(:chunks) do
+      add(:document, :text)
+      add(:source, :text)
+      add(:chunk, :text)
+      add(:embedding, :vector, size: 768)
+
+      timestamps()
+    end
   end
+
+  ## 2. Pipelines bumblebee + pgvector
+  # def up, do: Rag.Pipelines.Pgvector.Migrations.up()
+
+  # 1. custom with bumblebee + pgvector
+  def down() do
+    drop(table(:chunks))
+    execute("DROP EXTENSION vector")
+  end
+
+  ## 2. Pipelines bumblebee + pgvector
+  # def down, do: Rag.Pipelines.Pgvector.Migrations.down()
 end

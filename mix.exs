@@ -33,6 +33,9 @@ defmodule ExRagTime.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      {:rag, git: "git@github.com:bitcrowd/rag", branch: "library-draft"},
+      {:pgvector, "~> 0.3.0"},
+      {:postgrex, ">= 0.0.0"},
       {:burrito, "~> 1.0"},
       {:sqlite_vec, github: "joelpaulkoch/sqlite_vec"},
       {:bumblebee, github: "joelpaulkoch/bumblebee", branch: "jina-embeddings-v2-base-code"},

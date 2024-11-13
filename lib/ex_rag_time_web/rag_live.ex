@@ -12,7 +12,7 @@ defmodule ExRagTimeWeb.RagLive do
       |> assign_async(
         :chunks,
         fn ->
-          {:ok, %{chunks: ExRagTime.Repo.aggregate(ExRagTime.CodeChunk, :count)}}
+          {:ok, %{chunks: ExRagTime.Repo.aggregate("chunks", :count)}}
         end,
         reset: true
       )
@@ -20,8 +20,6 @@ defmodule ExRagTimeWeb.RagLive do
     {:ok, socket}
   end
 
-  # <div :if={@chunks.loading}>Ingesting...</div>
-  # <div :if={chunks = @chunks.ok? && @chunks.result}>Code chunks in database: <%= chunks %></div>
   @impl Phoenix.LiveView
   def render(assigns) do
     ~H"""
@@ -36,7 +34,7 @@ defmodule ExRagTimeWeb.RagLive do
       </div>
 
       <.simple_form for={@ingest_form} phx-submit="ingest">
-        <.input field={@ingest_form[:path]} label="Ingestion Path" />
+        <.input field={@ingest_form[:path]} label="Ingestion Path (to Elixir codebase)" />
         <:actions>
           <.button>Ingest</.button>
         </:actions>
@@ -70,7 +68,10 @@ defmodule ExRagTimeWeb.RagLive do
      assign_async(
        socket,
        :chunks,
-       fn -> {:ok, %{chunks: ExRagTime.ingest(path) |> Enum.count()}} end,
+       fn ->
+         ExRagTime.ingest(path)
+         {:ok, %{chunks: ExRagTime.Repo.aggregate("chunks", :count)}}
+       end,
        reset: true
      )}
   end
@@ -81,7 +82,7 @@ defmodule ExRagTimeWeb.RagLive do
        socket,
        :chunks,
        fn ->
-         ExRagTime.Repo.delete_all(ExRagTime.CodeChunk)
+         ExRagTime.Repo.delete_all("chunks")
 
          {:ok, %{chunks: 0}}
        end,
