@@ -69,7 +69,7 @@ defmodule ExRagTimeWeb.RagLive do
        socket,
        :chunks,
        fn ->
-         ExRagTime.ingest(path)
+         ExRagTime.Rag.ingest(path)
          {:ok, %{chunks: ExRagTime.Repo.aggregate("chunks", :count)}}
        end,
        reset: true
@@ -92,7 +92,7 @@ defmodule ExRagTimeWeb.RagLive do
 
   def handle_event("query", %{"question" => question}, socket) do
     {:noreply,
-     assign_async(socket, :response, fn -> {:ok, %{response: ExRagTime.query(question)}} end,
+     assign_async(socket, :response, fn -> {:ok, %{response: ExRagTime.Rag.query(question)}} end,
        reset: true
      )}
   end

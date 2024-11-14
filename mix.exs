@@ -33,7 +33,7 @@ defmodule ExRagTime.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
-      {:rag, git: "git@github.com:bitcrowd/rag", ref: "ea2a13f115e2e222072844f7bb1fa7a93f435d59"},
+      {:rag, git: "git@github.com:bitcrowd/rag", ref: "adff730d802b028a69c5068bc563409fda53638e"},
       {:pgvector, "~> 0.3.0"},
       {:postgrex, ">= 0.0.0"},
       {:burrito, "~> 1.0"},

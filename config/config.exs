@@ -17,15 +17,6 @@ config :ex_rag_time, ExRagTime.Repo,
   password: "postgres",
   hostname: "localhost"
 
-## 1. and 2. pgvector
-config :ex_rag_time, ExRagTime.Repo, types: ExRagTime.PostgrexTypes
-
-## 3. openai + chroma
-config :chroma,
-  host: "http://localhost:8000",
-  api_base: "api",
-  api_version: "v1"
-
 config :ex_rag_time,
   ecto_repos: [ExRagTime.Repo],
   generators: [timestamp_type: :utc_datetime]

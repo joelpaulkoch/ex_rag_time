@@ -8,9 +8,6 @@ defmodule ExRagTime.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      {Nx.Serving,
-       serving: build_embedding_serving(), name: Rag.EmbeddingServing, batch_timeout: 100},
-      {Nx.Serving, serving: build_llm_serving(), name: Rag.LLMServing, batch_timeout: 100},
       ExRagTimeWeb.Telemetry,
       ExRagTime.Repo,
       {Ecto.Migrator,
