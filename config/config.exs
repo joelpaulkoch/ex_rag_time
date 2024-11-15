@@ -7,10 +7,6 @@
 # General application configuration
 import Config
 
-# config for demo
-
-config :nx, default_backend: EXLA.Backend
-
 config :ex_rag_time, ExRagTime.Repo,
   database: "ex_rag_time_dev",
   username: "postgres",

@@ -33,21 +33,12 @@ defmodule ExRagTime.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
-      {:rag, git: "git@github.com:bitcrowd/rag", ref: "adff730d802b028a69c5068bc563409fda53638e"},
-      {:pgvector, "~> 0.3.0"},
-      {:postgrex, ">= 0.0.0"},
+      {:rag, git: "git@github.com:bitcrowd/rag"},
       {:burrito, "~> 1.0"},
-      {:sqlite_vec, github: "joelpaulkoch/sqlite_vec"},
-      {:bumblebee, github: "joelpaulkoch/bumblebee", branch: "jina-embeddings-v2-base-code"},
-      {:langchain, "~> 0.3.0-rc.0"},
-      {:text_chunker, "~> 0.3.1"},
-      {:nx, "~> 0.9.0"},
-      {:exla, "~> 0.9.1"},
-      {:axon, "~> 0.7.0"},
       {:phoenix, "~> 1.7.14"},
       {:phoenix_ecto, "~> 4.5"},
+      {:postgrex, ">= 0.0.0"},
       {:ecto_sql, "~> 3.10"},
-      {:ecto_sqlite3, ">= 0.0.0"},
       {:phoenix_html, "~> 4.1"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
       # TODO bump on release to {:phoenix_live_view, "~> 1.0.0"},
