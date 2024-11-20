@@ -48,7 +48,7 @@ defmodule RagTime.Serving do
     Bumblebee.Text.generation(model_info, tokenizer, generation_config,
       compile: [batch_size: 1, sequence_length: 6000],
       defn_options: [compiler: EXLA],
-      stream: true
+      stream: false
     )
   end
 end
@@ -88,13 +88,13 @@ defmodule RagTime.Ingestion do
 
     start_line =
       file_content
-      |> String.byte_slice(0, String.to_integer(start_byte))
+      |> String.byte_slice(0, start_byte)
       |> String.split("\n")
       |> Enum.count()
 
     end_line =
       file_content
-      |> String.byte_slice(0, String.to_integer(end_byte))
+      |> String.byte_slice(0, end_byte)
       |> String.split("\n")
       |> Enum.count()
 
@@ -129,12 +129,12 @@ end
 
 defmodule RagTime.Retrieval do
   def retrieve(collection, question) do
-    %{embedding: query_embedding} = Nx.Serving.batched_run(RagTime.EmbeddingsServing, question)
+    %{embedding: query_embedding} = Nx.Serving.batched_run(RagTime.EmbeddingServing, question)
 
     {:ok, results} =
       Chroma.Collection.query(collection,
         results: 3,
-        query_embeddings: [query_embedding]
+        query_embeddings: [Nx.to_list(query_embedding)]
       )
 
     {documents, sources} = {hd(results["documents"]), hd(results["ids"])}
@@ -155,8 +155,6 @@ end
 
 defmodule RagTime.Generation do
   def generate_response(question, context, context_sources) do
-    context = Enum.join(context, "\n\n")
-
     prompt =
       """
       <|system|>
