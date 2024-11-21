@@ -2,7 +2,7 @@ Mix.install(
   [
     {:phoenix_playground, "~> 0.1.6"},
     {:phoenix, "~> 1.7.14"},
-    {:phoenix_live_view, "~> 1.0.0-rc.1", override: true},
+    {:phoenix_live_view, "~> 1.0.0-rc.1"},
     {:chroma, "~> 0.1.3"},
     {:text_chunker, "~> 0.3.1"},
     {:nx, "~> 0.9.0"},
@@ -43,7 +43,7 @@ defmodule RagTime.Serving do
     {:ok, tokenizer} = Bumblebee.load_tokenizer(repo)
     {:ok, generation_config} = Bumblebee.load_generation_config(repo)
 
-    generation_config = Bumblebee.configure(generation_config, max_new_tokens: 100)
+    generation_config = Bumblebee.configure(generation_config, max_new_tokens: 256)
 
     Bumblebee.Text.generation(model_info, tokenizer, generation_config,
       compile: [batch_size: 1, sequence_length: 6000],
@@ -59,20 +59,22 @@ defmodule RagTime.Ingestion do
     sources = Enum.map(documents, & &1.source)
 
     Enum.zip(sources, chunks)
-    |> Enum.map(fn {source, source_chunks} ->
-      for chunk <- source_chunks,
-          do: %{
-            source: source,
-            start_byte: chunk.start_byte,
-            end_byte: chunk.end_byte,
-            text: chunk.text
-          }
+    |> Enum.flat_map(fn {source, source_chunks} ->
+      for chunk <- source_chunks do
+        %{
+          source: source,
+          start_byte: chunk.start_byte,
+          end_byte: chunk.end_byte,
+          text: chunk.text
+        }
+      end
     end)
-    |> List.flatten()
   end
 
   def generate_embeddings(chunks) do
-    Nx.Serving.batched_run(RagTime.EmbeddingServing, Enum.map(chunks, & &1.text))
+    chunk_text_list = Enum.map(chunks, & &1.text)
+
+    Nx.Serving.batched_run(RagTime.EmbeddingServing, chunk_text_list)
     |> Enum.map(fn %{embedding: embedding} -> Nx.to_list(embedding) end)
   end
 
@@ -101,24 +103,20 @@ defmodule RagTime.Ingestion do
     "#{path}:#{start_line}-#{end_line}"
   end
 
-  def ingest(collection, input_path) when is_binary(input_path) do
+  def ingest(collection, input_path) do
     files =
       Path.wildcard(input_path <> "/**/*.{ex, exs}")
       |> Enum.filter(fn path ->
-        not String.contains?(path, ["/_build/", "/deps/", "/node_modules/"])
+        not String.contains?(path, ["/_build/", "/deps/"])
       end)
 
     files_content = for file <- files, do: File.read!(file)
 
-    ingest(
-      collection,
+    documents =
       Enum.zip_with(files, files_content, fn file, content ->
         %{content: content, source: file}
       end)
-    )
-  end
 
-  def ingest(collection, documents) when is_list(documents) do
     chunks = chunk_with_metadata(documents, :elixir)
 
     embeddings = generate_embeddings(chunks)
@@ -128,24 +126,27 @@ defmodule RagTime.Ingestion do
 end
 
 defmodule RagTime.Retrieval do
-  def retrieve(collection, question) do
-    %{embedding: query_embedding} = Nx.Serving.batched_run(RagTime.EmbeddingServing, question)
+  def retrieve(collection, query) do
+    %{embedding: query_embedding} = Nx.Serving.batched_run(RagTime.EmbeddingServing, query)
+
+    query_embedding = Nx.to_list(query_embedding)
 
     {:ok, results} =
       Chroma.Collection.query(collection,
         results: 3,
-        query_embeddings: [Nx.to_list(query_embedding)]
+        query_embeddings: [query_embedding]
       )
 
-    {documents, sources} = {hd(results["documents"]), hd(results["ids"])}
-
-    results =
-      Enum.zip(documents, sources)
-      |> Enum.map(fn {document, source} -> %{document: document, source: source} end)
+    documents = hd(results["documents"])
+    sources = hd(results["ids"])
 
     context =
-      Enum.map(results, fn %{document: context} ->
-        "[...] #{context} [...]"
+      Enum.map(documents, fn code_chunk ->
+        """
+        [...]
+        #{code_chunk}
+        [...]
+        """
       end)
       |> Enum.join("\n\n")
 
@@ -154,7 +155,7 @@ defmodule RagTime.Retrieval do
 end
 
 defmodule RagTime.Generation do
-  def generate_response(question, context, context_sources) do
+  def generate_response(query, context, context_sources) do
     prompt =
       """
       <|system|>
@@ -165,7 +166,7 @@ defmodule RagTime.Generation do
       #{context}
       ---------------------
       Given the context information and no prior knowledge, answer the query.
-      Query: #{question}
+      Query: #{query}
       Answer: </s>
       <|assistant|>
       """
@@ -173,7 +174,7 @@ defmodule RagTime.Generation do
     %{results: [result]} = Nx.Serving.batched_run(RagTime.LLMServing, prompt)
 
     %{
-      query: question,
+      query: query,
       context: context,
       context_sources: context_sources,
       response: result.text
@@ -182,10 +183,12 @@ defmodule RagTime.Generation do
 end
 
 defmodule RagTime do
-  def query(collection, question) do
-    {context, sources} = RagTime.Retrieval.retrieve(collection, question)
+  def ingest(collection, path), do: RagTime.Ingestion.ingest(collection, path)
 
-    RagTime.Generation.generate_response(question, context, sources)
+  def query(collection, query) do
+    {context, sources} = RagTime.Retrieval.retrieve(collection, query)
+
+    RagTime.Generation.generate_response(query, context, sources)
   end
 end
 
@@ -200,7 +203,7 @@ defmodule RagLive do
 
     socket =
       socket
-      |> assign(:query_form, to_form(%{"question" => ""}))
+      |> assign(:query_form, to_form(%{"query" => ""}))
       |> assign(:ingest_form, to_form(%{"path" => ""}))
       |> assign_async(:response, fn -> {:ok, %{response: %{}}} end)
       |> assign_async(
@@ -216,9 +219,9 @@ defmodule RagLive do
 
   def render(assigns) do
     ~H"""
-    <div style="display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem">
+    <div>
       <h1>A RAG for Elixir</h1>
-      <div style="display: flex; flex-direction: row; gap: 1rem;">
+      <div>
         <.async_result :let={chunks} assign={@chunks}>
           <:loading>Ingesting...</:loading>
           <:failed>Something went wrong...</:failed>
@@ -237,14 +240,15 @@ defmodule RagLive do
         <:failed>Something went wrong...</:failed>
         <p :if={response[:query]}>Query: <%= response.query %></p>
         <p :if={response[:response]}>Response: <%= response.response %></p>
-
-        <p :if={response[:context_sources]}>Sources:</p>
-        <ol style="list-style-type: decimal;">
-          <li :for={source <- response[:context_sources] || []}><%= source %></li>
-        </ol>
+        <div :if={response[:context_sources]}>
+          <p>Sources:</p>
+          <ol>
+            <li :for={source <- response[:context_sources] || []}><%= source %></li>
+          </ol>
+        </div>
       </.async_result>
       <.form for={@query_form} phx-submit="query">
-        <.input type="text" field={@query_form[:question]} label="Question" />
+        <.input type="text" field={@query_form[:query]} label="Query" />
         <button>Send</button>
       </.form>
     </div>
@@ -282,7 +286,7 @@ defmodule RagLive do
        socket,
        :chunks,
        fn ->
-         RagTime.Ingestion.ingest(collection, path)
+         RagTime.ingest(collection, path)
          {:ok, %{chunks: Chroma.Collection.count(collection)}}
        end,
        reset: true
@@ -295,14 +299,17 @@ defmodule RagLive do
        socket,
        :chunks,
        fn ->
-         Chroma.Collection.delete(@chroma_collection_name)
+         {:ok, collection} =
+           Chroma.Collection.get_or_create(@chroma_collection_name, %{"hnsw:space" => "l2"})
+
+         Chroma.Collection.delete(collection)
          {:ok, %{chunks: 0}}
        end,
        reset: true
      )}
   end
 
-  def handle_event("query", %{"question" => question}, socket) do
+  def handle_event("query", %{"query" => query}, socket) do
     {:ok, collection} =
       Chroma.Collection.get_or_create(@chroma_collection_name, %{"hnsw:space" => "l2"})
 
@@ -310,7 +317,7 @@ defmodule RagLive do
      assign_async(
        socket,
        :response,
-       fn -> {:ok, %{response: RagTime.query(collection, question)}} end,
+       fn -> {:ok, %{response: RagTime.query(collection, query)}} end,
        reset: true
      )}
   end
@@ -322,8 +329,9 @@ PhoenixPlayground.start(
     {Nx.Serving,
      serving: RagTime.Serving.build_embedding_serving(),
      name: RagTime.EmbeddingServing,
-     batch_timeout: 100},
-    {Nx.Serving,
-     serving: RagTime.Serving.build_llm_serving(), name: RagTime.LLMServing, batch_timeout: 100}
+     batch_timeout: 100}
+    # ,
+    # {Nx.Serving,
+    #  serving: RagTime.Serving.build_llm_serving(), name: RagTime.LLMServing, batch_timeout: 100}
   ]
 )
