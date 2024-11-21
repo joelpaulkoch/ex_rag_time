@@ -329,9 +329,8 @@ PhoenixPlayground.start(
     {Nx.Serving,
      serving: RagTime.Serving.build_embedding_serving(),
      name: RagTime.EmbeddingServing,
-     batch_timeout: 100}
-    # ,
-    # {Nx.Serving,
-    #  serving: RagTime.Serving.build_llm_serving(), name: RagTime.LLMServing, batch_timeout: 100}
+     batch_timeout: 100},
+    {Nx.Serving,
+     serving: RagTime.Serving.build_llm_serving(), name: RagTime.LLMServing, batch_timeout: 100}
   ]
 )
