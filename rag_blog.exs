@@ -137,11 +137,17 @@ defmodule RagTime.Retrieval do
         query_embeddings: [query_embedding]
       )
 
-    documents = hd(results["documents"])
-    sources = hd(results["ids"])
+    [code_chunks] = results["documents"]
+    [sources] = results["ids"]
 
+    {code_chunks, sources}
+  end
+end
+
+defmodule RagTime.Generation do
+  def generate_response(query, context_documents, context_sources) do
     context =
-      Enum.map(documents, fn code_chunk ->
+      Enum.map(context_documents, fn code_chunk ->
         """
         [...]
         #{code_chunk}
@@ -150,12 +156,6 @@ defmodule RagTime.Retrieval do
       end)
       |> Enum.join("\n\n")
 
-    {context, sources}
-  end
-end
-
-defmodule RagTime.Generation do
-  def generate_response(query, context, context_sources) do
     prompt =
       """
       <|system|>
