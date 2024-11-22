@@ -54,6 +54,27 @@ defmodule RagTime.Serving do
 end
 
 defmodule RagTime.Ingestion do
+  def ingest(collection, input_path) do
+    files =
+      Path.wildcard(input_path <> "/**/*.{ex, exs}")
+      |> Enum.filter(fn path ->
+        not String.contains?(path, ["/_build/", "/deps/"])
+      end)
+
+    files_content = for file <- files, do: File.read!(file)
+
+    documents =
+      Enum.zip_with(files, files_content, fn file, content ->
+        %{content: content, source: file}
+      end)
+
+    chunks = chunk_with_metadata(documents, :elixir)
+
+    embeddings = generate_embeddings(chunks)
+
+    store_embeddings_and_chunks(collection, embeddings, chunks)
+  end
+
   def chunk_with_metadata(documents, format) do
     chunks = Enum.map(documents, &TextChunker.split(&1.content, format: format))
     sources = Enum.map(documents, & &1.source)
@@ -101,27 +122,6 @@ defmodule RagTime.Ingestion do
       |> Enum.count()
 
     "#{path}:#{start_line}-#{end_line}"
-  end
-
-  def ingest(collection, input_path) do
-    files =
-      Path.wildcard(input_path <> "/**/*.{ex, exs}")
-      |> Enum.filter(fn path ->
-        not String.contains?(path, ["/_build/", "/deps/"])
-      end)
-
-    files_content = for file <- files, do: File.read!(file)
-
-    documents =
-      Enum.zip_with(files, files_content, fn file, content ->
-        %{content: content, source: file}
-      end)
-
-    chunks = chunk_with_metadata(documents, :elixir)
-
-    embeddings = generate_embeddings(chunks)
-
-    store_embeddings_and_chunks(collection, embeddings, chunks)
   end
 end
 
@@ -203,9 +203,7 @@ defmodule RagLive do
 
     socket =
       socket
-      |> assign(:query_form, to_form(%{"query" => ""}))
       |> assign(:ingest_form, to_form(%{"path" => ""}))
-      |> assign_async(:response, fn -> {:ok, %{response: %{}}} end)
       |> assign_async(
         :chunks,
         fn ->
@@ -213,6 +211,8 @@ defmodule RagLive do
         end,
         reset: true
       )
+      |> assign(:query_form, to_form(%{"query" => ""}))
+      |> assign_async(:response, fn -> {:ok, %{response: %{}}} end)
 
     {:ok, socket}
   end
@@ -247,6 +247,7 @@ defmodule RagLive do
           </ol>
         </div>
       </.async_result>
+
       <.form for={@query_form} phx-submit="query">
         <.input type="text" field={@query_form[:query]} label="Query" />
         <button>Send</button>
