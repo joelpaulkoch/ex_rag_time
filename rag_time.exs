@@ -133,7 +133,7 @@ defmodule RagTime.Retrieval do
 
     {:ok, results} =
       Chroma.Collection.query(collection,
-        results: 3,
+        results: 10,
         query_embeddings: [query_embedding]
       )
 
