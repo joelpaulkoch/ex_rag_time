@@ -2,12 +2,17 @@ defmodule ExRagTimeWeb.RagLive do
   use ExRagTimeWeb, :live_view
   import ExRagTimeWeb.CoreComponents
 
+  alias Phoenix.PubSub
+
   @impl Phoenix.LiveView
   def mount(_params, _session, socket) do
+    if connected?(socket), do: PubSub.subscribe(ExRagTime.PubSub, "rag")
+
     socket =
       socket
       |> assign(:form, to_form(%{"question" => ""}))
       |> assign(:ingest_form, to_form(%{"path" => ""}))
+      |> assign(:rag_state, "hello")
       |> assign_async(:response, fn -> {:ok, %{response: %{}}} end)
       |> assign_async(
         :chunks,
@@ -21,9 +26,25 @@ defmodule ExRagTimeWeb.RagLive do
   end
 
   @impl Phoenix.LiveView
+  def handle_info({event, :start}, socket) do
+    {:noreply, assign(socket, rag_state: Atom.to_string(event))}
+  end
+
+  def handle_info({event, :stop}, socket) do
+    {:noreply, assign(socket, rag_state: "")}
+  end
+
+  def handle_info({event, :exception}, socket) do
+    {:noreply, assign(socket, rag_state: "horrible failure")}
+  end
+
+  @impl Phoenix.LiveView
   def render(assigns) do
     ~H"""
     <div class="grid grid-col-1 gap-4">
+      <p>
+        <%= @rag_state %>
+      </p>
       <div class="grid grid-cols-[1fr_auto]">
         <.async_result :let={chunks} assign={@chunks}>
           <:loading>Ingesting...</:loading>

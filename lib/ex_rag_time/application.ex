@@ -34,6 +34,14 @@ defmodule ExRagTime.Application do
       ExRagTimeWeb.Endpoint
     ]
 
+    :ok =
+      :telemetry.attach_many(
+        "rag-handler",
+        Rag.Telemetry.events(),
+        &ExRagTime.Rag.TelemetryHandler.handle_event/4,
+        nil
+      )
+
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: ExRagTime.Supervisor]
