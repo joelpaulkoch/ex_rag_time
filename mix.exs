@@ -32,9 +32,13 @@ defmodule ExRagTime.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      {:readability, "~> 0.12"},
+      {:hop, "~> 0.1.1"},
+      {:ecto, "~> 3.0"},
+      {:rag, "~> 0.1.0"},
       {:sqlite_vec, github: "joelpaulkoch/sqlite_vec"},
-      {:bumblebee, github: "joelpaulkoch/bumblebee", branch: "jina-embeddings-v2-base-code"},
-      {:langchain, "~> 0.3.0-rc.0"},
+      {:bumblebee, "~> 0.6.0"},
+      {:langchain, "== 0.3.0-rc.0"},
       {:text_chunker, "~> 0.3.1"},
       {:nx, "~> 0.9.0"},
       {:exla, "~> 0.9.1"},
@@ -47,7 +51,7 @@ defmodule ExRagTime.MixProject do
       {:phoenix_live_reload, "~> 1.2", only: :dev},
       # TODO bump on release to {:phoenix_live_view, "~> 1.0.0"},
       {:phoenix_live_view, "~> 1.0.0-rc.1", override: true},
-      {:floki, ">= 0.30.0", only: :test},
+      {:floki, ">= 0.30.0"},
       {:phoenix_live_dashboard, "~> 0.8.3"},
       {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
       {:tailwind, "~> 0.2", runtime: Mix.env() == :dev},

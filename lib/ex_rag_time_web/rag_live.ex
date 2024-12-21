@@ -8,11 +8,11 @@ defmodule ExRagTimeWeb.RagLive do
       socket
       |> assign(:form, to_form(%{"question" => ""}))
       |> assign(:ingest_form, to_form(%{"path" => ""}))
-      |> assign_async(:response, fn -> {:ok, %{response: %{}}} end)
+      |> assign_async(:response, fn -> {:ok, %{response: nil}} end)
       |> assign_async(
         :chunks,
         fn ->
-          {:ok, %{chunks: ExRagTime.Repo.aggregate(ExRagTime.CodeChunk, :count)}}
+          {:ok, %{chunks: ExRagTime.Repo.aggregate(ExRagTime.Rag.Chunk, :count)}}
         end,
         reset: true
       )
@@ -28,7 +28,7 @@ defmodule ExRagTimeWeb.RagLive do
         <.async_result :let={chunks} assign={@chunks}>
           <:loading>Ingesting...</:loading>
           <:failed>Something went wrong...</:failed>
-          <p>Code chunks in database: <%= chunks %></p>
+          <p>Chunks in database: <%= chunks %></p>
         </.async_result>
         <.button phx-click="reset">Reset</.button>
       </div>
@@ -43,12 +43,12 @@ defmodule ExRagTimeWeb.RagLive do
       <.async_result :let={response} assign={@response}>
         <:loading>Waiting for response...</:loading>
         <:failed>Something went wrong...</:failed>
-        <p :if={response[:query]}>Query: <%= response.query %></p>
-        <p :if={response[:response]}>Response: <%= response.response %></p>
+        <p :if={response}>Query: <%= response.query %></p>
+        <p :if={response}>Response: <%= response.response %></p>
 
-        <p :if={response[:context_sources]}>Sources:</p>
-        <ol class="list-decimal">
-          <li :for={source <- response[:context_sources] || []}><%= source %></li>
+        <p :if={response}>Sources:</p>
+        <ol :if={response} class="list-decimal">
+          <li :for={source <- response.context_sources || []}><%= source %></li>
         </ol>
       </.async_result>
 
@@ -68,7 +68,7 @@ defmodule ExRagTimeWeb.RagLive do
      assign_async(
        socket,
        :chunks,
-       fn -> {:ok, %{chunks: ExRagTime.ingest(path) |> Enum.count()}} end,
+       fn -> {:ok, %{chunks: ExRagTime.Rag.ingest(path) |> Enum.count()}} end,
        reset: true
      )}
   end
@@ -79,7 +79,7 @@ defmodule ExRagTimeWeb.RagLive do
        socket,
        :chunks,
        fn ->
-         ExRagTime.Repo.delete_all(ExRagTime.CodeChunk)
+         ExRagTime.Repo.delete_all(ExRagTime.Rag.Chunk)
 
          {:ok, %{chunks: 0}}
        end,
@@ -89,7 +89,7 @@ defmodule ExRagTimeWeb.RagLive do
 
   def handle_event("query", %{"question" => question}, socket) do
     {:noreply,
-     assign_async(socket, :response, fn -> {:ok, %{response: ExRagTime.query(question)}} end,
+     assign_async(socket, :response, fn -> {:ok, %{response: ExRagTime.Rag.query(question)}} end,
        reset: true
      )}
   end

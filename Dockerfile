@@ -24,6 +24,14 @@ FROM ${BUILDER_IMAGE} as builder
 RUN apt-get update -y && apt-get install -y build-essential git \
     && apt-get clean && rm -f /var/lib/apt/lists/*_*
 
+RUN apt update -q && apt install -y ca-certificates wget && \
+    wget -qO /cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i /cuda-keyring.deb && apt update -q
+
+
+# Install nvidia GPU support
+RUN apt-get install -y cuda-nvcc-12-6 libcublas-12-6 libcudnn9-cuda-12
+
 # prepare build dir
 WORKDIR /app
 
@@ -33,6 +41,10 @@ RUN mix local.hex --force && \
 
 # set build ENV
 ENV MIX_ENV="prod"
+
+ENV XLA_TARGET="cuda12"
+ENV BUMBLEBEE_CACHE_DIR="/mnt/data/cache/bumblebee"
+ENV XLA_CACHE_DIR="/mnt/data/cache/xla"
 
 # install mix dependencies
 COPY mix.exs mix.lock ./
@@ -71,6 +83,15 @@ RUN apt-get update -y && \
   apt-get install -y libstdc++6 openssl libncurses5 locales ca-certificates \
   && apt-get clean && rm -f /var/lib/apt/lists/*_*
 
+# Nvidia stuff
+RUN apt update -q && apt install -y ca-certificates wget && \
+    wget -qO /cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i /cuda-keyring.deb && apt update -q
+
+
+# Nvidia support in runtime layer
+RUN apt-get install -y --no-install-recommends cuda-nvcc-12-6 libcublas-12-6 libcudnn9-cuda-12
+
 # Set the locale
 RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
 
@@ -83,6 +104,11 @@ RUN chown nobody /app
 
 # set runner ENV
 ENV MIX_ENV="prod"
+
+# Bumblebee
+ENV XLA_TARGET="cuda12"
+ENV BUMBLEBEE_CACHE_DIR="/mnt/data/cache/bumblebee"
+ENV XLA_CACHE_DIR="/mnt/data/cache/xla"
 
 # Only copy the final release from the build stage
 COPY --from=builder --chown=nobody:root /app/_build/${MIX_ENV}/rel/ex_rag_time ./

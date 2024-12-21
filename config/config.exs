@@ -7,7 +7,9 @@
 # General application configuration
 import Config
 
-config :sqlite_vec, version: "0.1.3"
+config :nx, default_backend: EXLA.Backend
+
+config :sqlite_vec, version: "0.1.6"
 
 config :ex_rag_time,
   ecto_repos: [ExRagTime.Repo],

@@ -10,7 +10,7 @@ kill_signal = 'SIGTERM'
 [build]
 
 [env]
-  DATABASE_PATH = '/mnt/name/name.db'
+  DATABASE_PATH = '/mnt/data/rag.db'
   PHX_HOST = 'ex-rag-time.fly.dev'
   PORT = '8080'
 
